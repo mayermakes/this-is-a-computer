@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>TTL Bit-Serial CPU (Fixed)</title>
+
+<style>
+body { background:#111; color:#0f0; font-family: monospace; }
+.panel { border:1px solid #0f0; padding:10px; margin:10px; display:inline-block; vertical-align:top; }
+.led {
+  width:14px;height:14px;margin:2px;
+  display:inline-block;border-radius:50%;
+  background:#020;
+}
+.on { background:#0f0; box-shadow:0 0 6px #0f0; }
+textarea { background:#000; color:#0f0; border:1px solid #0f0; }
+button { background:#000; color:#0f0; border:1px solid #0f0; margin:2px; }
+</style>
+</head>
+
+<body>
+
+<h2>Bit-Serial TTL CPU (Hardware Accurate)</h2>
+
+<div class="panel">
+<h3>Assembly</h3>
+<textarea id="code" rows="10" cols="25">
+LOAD 3
+ADD 5
+XOR 2
+OUTPUT
+HALT
+</textarea><br>
+<button onclick="loadProgram()">LOAD</button>
+<button onclick="step()">STEP</button>
+<button onclick="run()">RUN</button>
+<button onclick="resetCPU()">RESET</button>
+</div>
+
+<div class="panel">
+<h3>ACC</h3>
+<div id="acc"></div>
+
+<h3>OPR</h3>
+<div id="opr"></div>
+
+<h3>OUT</h3>
+<div id="out"></div>
+
+<h3>STATE</h3>
+<div id="state"></div>
+</div>
+
+<div class="panel">
+<h3>PROGRAM (74HC595)</h3>
+<pre id="prog"></pre>
+</div>
+
+<script>
+
+const WORD = 5;
+
+let program = [];
+let pc = 0;
+
+let acc = 0;
+let opr = 0;
+let out = [];
+
+let state = "FETCH";
+let op = null;
+
+let bit = 0;
+let carry = 0;
+
+const OPC = {
+  LOAD:1,
+  ADD:2,
+  SUB:3,
+  AND:4,
+  OR:5,
+  XOR:6,
+  OUTPUT:7,
+  HALT:8
+};
+
+function led(v){
+  let s="";
+  for(let i=WORD-1;i>=0;i--){
+    s += `<span class="led ${((v>>i)&1)?'on':''}"></span>`;
+  }
+  return s;
+}
+
+function encodeInstr(op){ return (OPC[op]<<1)|1; }
+function encodeData(v){ return (v<<1)|0; }
+
+function loadProgram(){
+  program=[];
+  let lines=document.getElementById("code").value.trim().split("\n");
+
+  for(let l of lines){
+    let [op,val]=l.trim().split(" ");
+
+    op=op.toUpperCase();
+
+    if(["LOAD","ADD","SUB","AND","OR","XOR"].includes(op)){
+      program.push(encodeInstr(op));
+      program.push(encodeData(parseInt(val)));
+    } else {
+      program.push(encodeInstr(op));
+    }
+  }
+
+  pc=0;
+  render();
+}
+
+function alu(a,b,op){
+  switch(op){
+    case "LOAD": return b;
+    case "ADD": return (a+b)&31;
+    case "SUB": return (a-b)&31;
+    case "AND": return a&b;
+    case "OR": return a|b;
+    case "XOR": return a^b;
+  }
+  return a;
+}
+
+function step(){
+
+  if(state==="FETCH"){
+
+    if(pc>=program.length){
+      state="HALT";
+      render();
+      return;
+    }
+
+    let w=program[pc++];
+    let bit0=w&1;
+    let opcode=(w>>1)&7;
+
+    if(bit0===0){
+      opr=(w>>1);
+      render();
+      return;
+    }
+
+    const OPS=["","LOAD","ADD","SUB","AND","OR","XOR","OUTPUT","HALT"];
+    op=OPS[opcode];
+
+    if(op==="HALT"){
+      state="HALT";
+      render();
+      return;
+    }
+
+    if(op==="OUTPUT"){
+      out.push(acc);
+      render();
+      return;
+    }
+
+    let w2=program[pc++];
+    opr=(w2>>1);
+
+    bit=0;
+    carry=0;
+    state="EXEC";
+
+    render();
+    return;
+  }
+
+  if(state==="EXEC"){
+
+    let a=(acc>>bit)&1;
+    let b=(opr>>bit)&1;
+
+    let r=0;
+
+    if(["AND","OR","XOR"].includes(op)){
+      if(op==="AND") r=a&b;
+      if(op==="OR") r=a|b;
+      if(op==="XOR") r=a^b;
+    } else {
+      let sum=a^b^carry;
+      carry=(a&b)|(a&carry)|(b&carry);
+      r=sum;
+    }
+
+    acc=(acc & ~(1<<bit)) | (r<<bit);
+
+    bit++;
+
+    if(bit>=5){
+      state="FETCH";
+    }
+
+    render();
+  }
+}
+
+function run(){
+  let t=setInterval(()=>{
+    if(state==="HALT"){ clearInterval(t); return; }
+    step();
+  },200);
+}
+
+function resetCPU(){
+  program=[];
+  pc=0;
+  acc=0;
+  opr=0;
+  out=[];
+  state="FETCH";
+  bit=0;
+  carry=0;
+  render();
+}
+
+function render(){
+  document.getElementById("acc").innerHTML=led(acc);
+  document.getElementById("opr").innerHTML=led(opr);
+  document.getElementById("out").innerHTML=out.map(x=>x.toString(2).padStart(5,"0")).join("<br>");
+  document.getElementById("prog").innerText=program.map(x=>x.toString(2).padStart(5,"0")).join("\n");
+  document.getElementById("state").innerText=
+    state+" | PC="+pc+" | OP="+op+" | BIT="+bit;
+}
+
+render();
+
+</script>
+
+</body>
+</html>
